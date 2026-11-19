@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -11,30 +11,40 @@ body{margin:0;background:#000;color:#fff;font-family:sans-serif}
 .vid{position:relative;padding-top:56.25%}
 #holder{position:absolute;top:0;left:0;width:100%;height:100%}
 #holder iframe{width:100%;height:100%;border:0}
-#box{height:320px;overflow-y:auto;padding:10px;background:#111;line-height:1.9;text-align:center;font-size:16px;position:relative}
+#bar{background:#000;color:#fff;min-height:64px;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px 12px;box-sizing:border-box;font-size:18px;line-height:1.5}
+/* 以下只在網址加上 ?tap 時才顯示（打軸用） */
+#box{display:none;height:260px;overflow-y:auto;padding:10px;background:#111;line-height:1.9;text-align:center;font-size:16px;position:relative}
 #box div{opacity:.45;cursor:pointer;transition:.2s}
 #box div.active{opacity:1;color:#ff6b81;font-weight:bold}
 #box div.gap{height:14px;cursor:default}
-.ctl{text-align:center;padding:8px}
+.ctl{display:none;text-align:center;padding:8px}
+.ctl button{margin:3px}
+#out{display:none;width:100%;box-sizing:border-box}
+.dev #box{display:block}
+.dev .ctl{display:block}
 button{font-size:15px;padding:6px 14px}
-#out{width:100%;box-sizing:border-box;display:none}
 </style>
 </head>
 <body>
 <div id="wrap">
   <div class="vid"><div id="holder"></div></div>
+  <div id="bar"></div>
   <div id="box"></div>
   <div class="ctl">
     <button id="tapmode">打軸模式：關</button>
-    <button id="mark" style="display:none">▶ 標記這句</button>
-    <button id="undo" style="display:none">↩ 上一句</button>
+    <button id="endmode">補結束時間：關</button><br>
+    <button id="mark" style="display:none">▶ 標記開始</button>
+    <button id="markend" style="display:none">■ 標記結束</button>
+    <button id="undo" style="display:none">↩ 上一步</button>
   </div>
-  <textarea id="out" rows="3" readonly></textarea>
+  <textarea id="out" rows="4" readonly></textarea>
 </div>
 <script>
 var VIDEO_ID = "IBva7Fu0O2Q";
-// 打完軸後把數字貼這裡（共 16 個）
+// 開始時間：把你原本打好的數字貼在這裡（共 16 個）
 var times = [0.00,16.21,30.66,39.66,48.24,63.65,79.07,87.49,96.29,99.86,134.18,143.56,150.19,159.68,168.14,175.76];
+// 結束時間：沒有設的填 null；留空 [] 代表每句都唱到下一句開始才換
+var ends = [];
 var lyrics = [
 "來啊，悲傷的亡者呀 靜穆地啜泣",
 "請看，高興的亡者啊 相反地笑著呀","",
@@ -54,18 +64,22 @@ var lyrics = [
 "都在模模糊糊的 黑暗中"
 ];
 
-// ---------- 歌詞列表 ----------
-var box = document.getElementById("box"), els = [];
+// 只有網址帶 ?tap 時才進入打軸版面
+var DEV = /[?&]tap\b/.test(location.search);
+if (DEV) document.body.className = "dev";
+
+var bar = document.getElementById("bar");
+var box = document.getElementById("box"), els = [], texts = [];
 lyrics.forEach(function(t){
   var p = document.createElement("div");
   if (t === "") { p.className = "gap"; box.appendChild(p); return; }
   p.textContent = t;
   var i = els.length;
   p.onclick = function(){ if (times[i] != null) seekTo(times[i]); };
-  box.appendChild(p); els.push(p);
+  box.appendChild(p); els.push(p); texts.push(t);
 });
 
-// ---------- 播放器（不使用 YouTube JS 程式庫） ----------
+// ---------- 播放器 ----------
 var frame = document.createElement("iframe");
 frame.id = "yt";
 frame.src = "https://www.youtube.com/embed/" + VIDEO_ID +
@@ -76,7 +90,6 @@ frame.referrerPolicy = "strict-origin-when-cross-origin";
 document.getElementById("holder").appendChild(frame);
 
 var lastTime = 0, lastStamp = 0, state = -1, rate = 1, connected = false, tries = 0;
-
 function send(obj){
   obj.id = 1; obj.channel = "widget";
   try { frame.contentWindow.postMessage(JSON.stringify(obj), "https://www.youtube.com"); } catch(e){}
@@ -92,7 +105,6 @@ frame.addEventListener("load", function(){
     handshake();
   }, 500);
 });
-
 window.addEventListener("message", function(e){
   if (e.origin !== "https://www.youtube.com" || e.source !== frame.contentWindow) return;
   var d; try { d = JSON.parse(e.data); } catch(x){ return; }
@@ -106,7 +118,6 @@ window.addEventListener("message", function(e){
     if (typeof info.currentTime === "number") { lastTime = info.currentTime; lastStamp = performance.now(); }
   }
 });
-
 function getTime(){
   if (state === 1) return lastTime + (performance.now() - lastStamp) / 1000 * rate;
   return lastTime;
@@ -116,44 +127,94 @@ function seekTo(sec){
   lastTime = sec; lastStamp = performance.now();
 }
 
-// ---------- 高亮同步 ----------
-var cur = -1, tap = false, next = 0, rec = [];
+// ---------- 顯示目前歌詞 ----------
+var cur = -1, tap = false, endMode = false, next = 0, rec = [], endRec = [], endStack = [];
 function setActive(idx){
   if (idx === cur) return;
-  if (cur >= 0) els[cur].classList.remove("active");
-  if (idx >= 0) {
-    var el = els[idx]; el.classList.add("active");
-    box.scrollTo({ top: el.offsetTop - box.clientHeight/2 + el.clientHeight/2, behavior: "smooth" });
+  if (DEV) {
+    if (cur >= 0) els[cur].classList.remove("active");
+    if (idx >= 0) {
+      var el = els[idx]; el.classList.add("active");
+      box.scrollTo({ top: el.offsetTop - box.clientHeight/2 + el.clientHeight/2, behavior: "smooth" });
+    }
   }
+  bar.textContent = idx >= 0 ? texts[idx] : "";
   cur = idx;
 }
 setInterval(function(){
   if (tap || !times.length) return;
   var t = getTime(), idx = -1;
   for (var i = 0; i < times.length; i++) { if (t >= times[i]) idx = i; else break; }
+  // 已過結束時間就不顯示
+  if (idx >= 0 && ends[idx] != null && ends[idx] > times[idx] && t >= ends[idx]) idx = -1;
   setActive(idx);
 }, 150);
 
-// ---------- 打軸模式 ----------
-var tapBtn = document.getElementById("tapmode"), markBtn = document.getElementById("mark"),
+// ---------- 打軸工具（僅 ?tap 時可用） ----------
+var tapBtn = document.getElementById("tapmode"), endBtn = document.getElementById("endmode"),
+    markBtn = document.getElementById("mark"), markEndBtn = document.getElementById("markend"),
     undoBtn = document.getElementById("undo"), out = document.getElementById("out");
-function showOut(){ out.value = "[" + rec.map(function(n){return n.toFixed(2);}).join(",") + "]"; }
-tapBtn.onclick = function(){
-  tap = !tap;
+
+function fmt(a){
+  return "[" + a.map(function(n){ return n == null ? "null" : n.toFixed(2); }).join(",") + "]";
+}
+function padEnds(){
+  var a = [];
+  for (var i = 0; i < els.length; i++) a.push(ends[i] != null ? ends[i] : null);
+  return a;
+}
+function showOut(){
+  if (tap) out.value = "var times = " + fmt(rec) + ";\nvar ends = " + fmt(endRec) + ";";
+  else if (endMode) out.value = "var ends = " + fmt(padEnds()) + ";";
+  else out.value = "";
+}
+function ui(){
+  var on = tap || endMode;
+  markBtn.style.display = tap ? "inline-block" : "none";
+  markEndBtn.style.display = on ? "inline-block" : "none";
+  undoBtn.style.display = on ? "inline-block" : "none";
+  out.style.display = on ? "block" : "none";
   tapBtn.textContent = "打軸模式：" + (tap ? "開" : "關");
-  markBtn.style.display = undoBtn.style.display = tap ? "inline-block" : "none";
-out.style.display = tap ? "block" : "none";
-  rec = []; next = 0; showOut(); setActive(tap ? 0 : -1);
+  endBtn.textContent = "補結束時間：" + (endMode ? "開" : "關");
+}
+tapBtn.onclick = function(){
+  tap = !tap; if (tap) endMode = false;
+  rec = []; endRec = []; next = 0;
+  ui(); showOut(); setActive(tap ? 0 : -1);
+};
+endBtn.onclick = function(){
+  endMode = !endMode; if (endMode) tap = false;
+  endStack = [];
+  ui(); showOut();
 };
 markBtn.onclick = function(){
-  if (next >= els.length) return;
-  rec.push(getTime()); next++; showOut();
+  if (!tap || next >= els.length) return;
+  rec.push(getTime()); endRec.push(null); next++; showOut();
   setActive(next < els.length ? next : els.length - 1);
 };
+markEndBtn.onclick = function(){
+  var t = getTime();
+  if (tap) {
+    if (!rec.length) return;
+    endRec[rec.length - 1] = t; showOut();
+  } else if (endMode) {
+    if (cur < 0) return;
+    ends[cur] = t; endStack.push(cur); showOut();
+  }
+};
 undoBtn.onclick = function(){
-  if (!rec.length) return;
-  rec.pop(); next--; showOut(); setActive(next);
-  seekTo(rec[next-1] || 0);
+  if (tap) {
+    if (!rec.length) return;
+    var L = rec.length - 1;
+    if (endRec[L] != null) { endRec[L] = null; seekTo(rec[L]); }
+    else { rec.pop(); endRec.pop(); next--; setActive(next); seekTo(rec[next-1] || 0); }
+    showOut();
+  } else if (endMode) {
+    if (!endStack.length) return;
+    var i = endStack.pop(); ends[i] = null;
+    if (times[i] != null) seekTo(times[i]);
+    showOut();
+  }
 };
 </script>
 </body>
