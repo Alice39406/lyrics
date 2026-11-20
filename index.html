@@ -12,8 +12,11 @@ body.dev{overflow:auto}
 .vid{position:relative;width:100%;aspect-ratio:16/9}
 #holder{position:absolute;top:0;left:0;width:100%;height:100%}
 #holder iframe{width:100%;height:100%;border:0}
-#bar{background:#000;color:#fff;height:72px;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 12px;box-sizing:border-box;overflow:hidden;font-size:clamp(13px,3.4vw,20px);line-height:1.5}
-/* 以下只在網址加上 ?tap 時才顯示（打軸用） */
+#bar{background:#000;color:#fff;height:72px;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 12px;box-sizing:border-box;overflow:hidden;font-size:clamp(13px,2.4vw,30px);line-height:1.5}
+/* 以下只在網址帶 tap 時才顯示（製作用） */
+#setup{display:none;padding:10px;background:#111}
+#setup input,#setup textarea{width:100%;box-sizing:border-box;margin-bottom:6px}
+#dbg{display:none;padding:4px 10px;background:#222;font-size:13px;color:#9cf}
 #box{display:none;height:260px;overflow-y:auto;padding:10px;background:#111;line-height:1.9;text-align:center;font-size:16px;position:relative}
 #box div{opacity:.45;cursor:pointer;transition:.2s}
 #box div.active{opacity:1;color:#ff6b81;font-weight:bold}
@@ -21,7 +24,7 @@ body.dev{overflow:auto}
 .ctl{display:none;text-align:center;padding:8px}
 .ctl button{margin:3px}
 #out{display:none;width:100%;box-sizing:border-box}
-.dev #box{display:block}
+.dev #box,.dev #dbg{display:block}
 .dev .ctl{display:block}
 button{font-size:15px;padding:6px 14px}
 </style>
@@ -30,6 +33,13 @@ button{font-size:15px;padding:6px 14px}
 <div id="wrap">
   <div class="vid"><div id="holder"></div></div>
   <div id="bar"></div>
+  <div id="dbg"></div>
+  <div id="setup">
+    <div style="margin-bottom:6px">新增歌曲：貼上 YouTube 或 niconico 的影片網址（或影片 ID）與歌詞，段落之間空一行</div>
+    <input id="vurl" placeholder="https://www.youtube.com/watch?v=...　或　https://www.nicovideo.jp/watch/sm9">
+    <textarea id="ltext" rows="10" placeholder="歌詞"></textarea>
+    <button id="start">載入影片與歌詞</button>
+  </div>
   <div id="box"></div>
   <div class="ctl">
     <button id="tapmode">打軸模式：關</button>
@@ -38,78 +48,102 @@ button{font-size:15px;padding:6px 14px}
     <button id="markend" style="display:none">■ 標記結束</button>
     <button id="undo" style="display:none">↩ 上一步</button>
   </div>
-  <textarea id="out" rows="4" readonly></textarea>
+  <textarea id="out" rows="12" readonly></textarea>
 </div>
 <script>
-var VIDEO_ID = "IBva7Fu0O2Q";
-// 開始時間：把你原本打好的數字貼在這裡（共 16 個）
-var times = [0.00,16.21,30.66,39.66,48.24,63.65,79.07,87.49,96.29,99.86,134.18,143.56,150.19,159.68,168.14,175.76];
-// 結束時間：沒有設的填 null；留空 [] 代表每句都唱到下一句開始才換
-var ends = [13.61,29.76,39.72,48.19,61.10,77.10,87.56,96.09,99.89,104.19,143.41,150.00,159.44,168.02,175.17,180.88];
-var lyrics = [
-"來啊，悲傷的亡者呀 靜穆地啜泣",
-"請看，高興的亡者啊 相反地笑著呀","",
-"啊啊，人生總是獨自一人 無法分享",
-"即使湧出一生一世的戀情 也只會錯過而已","",
-"來啊，可恨的亡者呀 一時地欺瞞",
-"請看，憐愛的亡者啊 長久地被騙呀","",
-"啊啊，人生總是只有一次 無法挽回",
-"不管是最初還是最終之時 總是突然走到盡頭","",
-"毫無準備的孤注一擲",
-"是成 是敗","",
-"啊啊，人生總是搖晃的 微弱之炎",
-"要燃盡了呀 要熄滅了呀","",
-"啊啊，親愛的您啊到底是誰 想不起來啊",
-"明明依靠著 確實就要這樣回想起來似的","",
-"來啊，一切的一切現在",
-"都在模模糊糊的 黑暗中"
-];
-
-// 只有網址帶 ?tap 時才進入打軸版面
-var DEV = /[?&]tap\b/.test(location.search);
+var q = new URLSearchParams(location.search);
+var DEV = q.has("tap");
+var songId = q.get("song");
 if (DEV) document.body.className = "dev";
 
-var bar = document.getElementById("bar");
-var box = document.getElementById("box"), els = [], texts = [];
-lyrics.forEach(function(t){
-  var p = document.createElement("div");
-  if (t === "") { p.className = "gap"; box.appendChild(p); return; }
-  p.textContent = t;
-  var i = els.length;
-  p.onclick = function(){ if (times[i] != null) seekTo(times[i]); };
-  box.appendChild(p); els.push(p); texts.push(t);
-});
-
-// ---------- 播放器 ----------
-var frame = document.createElement("iframe");
-frame.id = "yt";
-frame.src = "https://www.youtube.com/embed/" + VIDEO_ID +
-  "?enablejsapi=1&playsinline=1&rel=0&origin=" + encodeURIComponent(location.origin);
-frame.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";
-frame.allowFullscreen = true;
-frame.referrerPolicy = "strict-origin-when-cross-origin";
-document.getElementById("holder").appendChild(frame);
-
+var YT_ORIGIN = "https://www.youtube.com", NICO_ORIGIN = "https://embed.nicovideo.jp";
+var SITE = "youtube", VIDEO_ID = "", lyrics = [], times = [], ends = [];
+var bar = document.getElementById("bar"), box = document.getElementById("box"),
+    setup = document.getElementById("setup"), dbg = document.getElementById("dbg");
+var els = [], texts = [], frame = null;
 var lastTime = 0, lastStamp = 0, state = -1, rate = 1, connected = false, tries = 0;
+var nicoPlaying = false, nicoMul = 1000, nicoLen = 0, nicoDur = 0;
+
+// ---------- 歌詞清單（僅製作模式可見） ----------
+function buildList(){
+  box.innerHTML = ""; els = []; texts = [];
+  lyrics.forEach(function(t){
+    var p = document.createElement("div");
+    if (t === "") { p.className = "gap"; box.appendChild(p); return; }
+    p.textContent = t;
+    var i = els.length;
+    p.onclick = function(){ if (times[i] != null) seekTo(times[i]); };
+    box.appendChild(p); els.push(p); texts.push(t);
+  });
+}
+
+// ---------- 與播放器溝通 ----------
 function send(obj){
-  obj.id = 1; obj.channel = "widget";
-  try { frame.contentWindow.postMessage(JSON.stringify(obj), "https://www.youtube.com"); } catch(e){}
+  if (!frame) return;
+  try {
+    if (SITE === "nico") {
+      obj.sourceConnectorType = 1; obj.playerId = "lyr";
+      frame.contentWindow.postMessage(obj, NICO_ORIGIN);
+    } else {
+      obj.id = 1; obj.channel = "widget";
+      frame.contentWindow.postMessage(JSON.stringify(obj), YT_ORIGIN);
+    }
+  } catch(e){}
 }
 function handshake(){
   send({ event: "listening" });
   send({ event: "command", func: "addEventListener", args: ["onStateChange"] });
 }
-frame.addEventListener("load", function(){
-  handshake();
-  var h = setInterval(function(){
-    if (connected || ++tries > 30) { clearInterval(h); return; }
-    handshake();
-  }, 500);
-});
+function buildPlayer(){
+  if (frame) return;
+  frame = document.createElement("iframe");
+  if (SITE === "nico") {
+    frame.src = NICO_ORIGIN + "/watch/" + encodeURIComponent(VIDEO_ID) + "?jsapi=1&playerId=lyr";
+    frame.allow = "autoplay; fullscreen";
+  } else {
+    frame.src = YT_ORIGIN + "/embed/" + VIDEO_ID +
+      "?enablejsapi=1&playsinline=1&rel=0&origin=" + encodeURIComponent(location.origin);
+    frame.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";
+  }
+  frame.allowFullscreen = true;
+  frame.referrerPolicy = "strict-origin-when-cross-origin";
+  document.getElementById("holder").appendChild(frame);
+  if (SITE !== "nico") {
+    frame.addEventListener("load", function(){
+      handshake();
+      var h = setInterval(function(){
+        if (connected || ++tries > 30) { clearInterval(h); return; }
+        handshake();
+      }, 500);
+    });
+  }
+}
+// niconico 的時間單位（秒或毫秒）依影片長度自動判斷
+function calibrate(){
+  if (nicoDur > 0 && nicoLen > 0) nicoMul = nicoDur > nicoLen * 100 ? 1000 : 1;
+  else if (nicoDur > 0) nicoMul = nicoDur > 20000 ? 1000 : 1;
+}
 window.addEventListener("message", function(e){
-  if (e.origin !== "https://www.youtube.com" || e.source !== frame.contentWindow) return;
-  var d; try { d = JSON.parse(e.data); } catch(x){ return; }
+  if (!frame || e.source !== frame.contentWindow) return;
+  var d = e.data;
+  if (typeof d === "string") { try { d = JSON.parse(d); } catch(x){ return; } }
   if (!d) return;
+  if (SITE === "nico") {
+    if (e.origin !== NICO_ORIGIN) return;
+    connected = true;
+    if (d.eventName === "loadComplete" && d.data && d.data.videoInfo) {
+      nicoLen = d.data.videoInfo.lengthInSeconds || 0; calibrate();
+    } else if (d.eventName === "playerMetadataChange" && d.data) {
+      if (typeof d.data.duration === "number" && d.data.duration > 0) { nicoDur = d.data.duration; calibrate(); }
+      if (typeof d.data.currentTime === "number") {
+        var t = d.data.currentTime / nicoMul, n = performance.now();
+        nicoPlaying = t > lastTime + 0.001 && (n - lastStamp) < 1500;
+        lastTime = t; lastStamp = n;
+      }
+    }
+    return;
+  }
+  if (e.origin !== YT_ORIGIN) return;
   connected = true;
   var info = d.info;
   if (d.event === "onStateChange") { state = info; lastStamp = performance.now(); return; }
@@ -120,21 +154,75 @@ window.addEventListener("message", function(e){
   }
 });
 function getTime(){
-  if (state === 1) return lastTime + (performance.now() - lastStamp) / 1000 * rate;
+  var el = (performance.now() - lastStamp) / 1000;
+  if (SITE === "nico") return lastTime + (nicoPlaying && el < 0.7 ? Math.min(el, 0.3) : 0);
+  if (state === 1) return lastTime + el * rate;
   return lastTime;
 }
 function seekTo(sec){
-  send({ event: "command", func: "seekTo", args: [sec, true] });
+  if (SITE === "nico") send({ eventName: "seek", data: { time: sec * nicoMul } });
+  else send({ event: "command", func: "seekTo", args: [sec, true] });
   lastTime = sec; lastStamp = performance.now();
 }
+
+// ---------- 讀取歌曲資料 ----------
+function load(d){
+  SITE = d.site === "nico" ? "nico" : "youtube";
+  VIDEO_ID = d.video;
+  lyrics = d.lyrics || [];
+  times = d.times || [];
+  ends = d.ends || [];
+  buildList(); buildPlayer();
+}
+function showSetup(){ if (DEV) setup.style.display = "block"; }
+
+if (songId) {
+  if (!/^[\w\-]+(\/[\w\-]+)*$/.test(songId)) {
+    bar.textContent = "歌曲代碼格式不正確"; showSetup();
+  } else {
+    fetch("songs/" + songId + ".json" + (DEV ? "?v=" + Date.now() : ""))
+      .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(load)
+      .catch(function(){ bar.textContent = "找不到歌曲資料"; showSetup(); });
+  }
+} else {
+  if (!DEV) bar.textContent = "請在網址加上 ?song=歌曲代碼";
+  showSetup();
+}
+
+// ---------- 新增歌曲表單 ----------
+function parseVideo(s){
+  s = s.trim();
+  var n = s.match(/(?:nicovideo\.jp\/watch\/|nico\.ms\/)((?:sm|nm|so)?\d+)/);
+  if (n) return { site: "nico", id: n[1] };
+  if (/^(?:sm|nm|so)\d+$/.test(s)) return { site: "nico", id: s };
+  var m = s.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([\w-]{11})/);
+  if (m) return { site: "youtube", id: m[1] };
+  if (/^[\w-]{11}$/.test(s)) return { site: "youtube", id: s };
+  return null;
+}
+document.getElementById("start").onclick = function(){
+  var v = parseVideo(document.getElementById("vurl").value);
+  if (!v) { alert("看不出影片 ID，請確認網址"); return; }
+  var arr = [];
+  document.getElementById("ltext").value.split(/\r?\n/).forEach(function(l){
+    l = l.trim();
+    if (l === "") { if (arr.length && arr[arr.length-1] !== "") arr.push(""); }
+    else arr.push(l);
+  });
+  while (arr.length && arr[arr.length-1] === "") arr.pop();
+  if (!arr.length) { alert("請貼上歌詞"); return; }
+  load({ site: v.site, video: v.id, lyrics: arr });
+  setup.style.display = "none";
+};
 
 // ---------- 顯示目前歌詞 ----------
 var cur = -1, tap = false, endMode = false, next = 0, rec = [], endRec = [], endStack = [];
 function setActive(idx){
   if (idx === cur) return;
   if (DEV) {
-    if (cur >= 0) els[cur].classList.remove("active");
-    if (idx >= 0) {
+    if (cur >= 0 && els[cur]) els[cur].classList.remove("active");
+    if (idx >= 0 && els[idx]) {
       var el = els[idx]; el.classList.add("active");
       box.scrollTo({ top: el.offsetTop - box.clientHeight/2 + el.clientHeight/2, behavior: "smooth" });
     }
@@ -143,15 +231,19 @@ function setActive(idx){
   cur = idx;
 }
 setInterval(function(){
+  var t = getTime();
+  if (DEV) {
+    dbg.textContent = "播放器：" + SITE + "　已連線：" + (connected ? "是" : "否") +
+      "　播放時間：" + t.toFixed(1) + " 秒" + (SITE === "nico" ? "　（時間單位倍率 " + nicoMul + "）" : "");
+  }
   if (tap || !times.length) return;
-  var t = getTime(), idx = -1;
+  var idx = -1;
   for (var i = 0; i < times.length; i++) { if (t >= times[i]) idx = i; else break; }
-  // 已過結束時間就不顯示
   if (idx >= 0 && ends[idx] != null && ends[idx] > times[idx] && t >= ends[idx]) idx = -1;
   setActive(idx);
 }, 150);
 
-// ---------- 打軸工具（僅 ?tap 時可用） ----------
+// ---------- 製作工具（僅網址帶 tap 時可用） ----------
 var tapBtn = document.getElementById("tapmode"), endBtn = document.getElementById("endmode"),
     markBtn = document.getElementById("mark"), markEndBtn = document.getElementById("markend"),
     undoBtn = document.getElementById("undo"), out = document.getElementById("out");
@@ -164,9 +256,14 @@ function padEnds(){
   for (var i = 0; i < els.length; i++) a.push(ends[i] != null ? ends[i] : null);
   return a;
 }
+function outJSON(t, e){
+  return '{\n"site": ' + JSON.stringify(SITE) + ',\n"video": ' + JSON.stringify(VIDEO_ID) + ',\n"lyrics": [\n' +
+    lyrics.map(function(s){ return JSON.stringify(s); }).join(",\n") +
+    '\n],\n"times": ' + fmt(t) + ',\n"ends": ' + fmt(e) + '\n}';
+}
 function showOut(){
-  if (tap) out.value = "var times = " + fmt(rec) + ";\nvar ends = " + fmt(endRec) + ";";
-  else if (endMode) out.value = "var ends = " + fmt(padEnds()) + ";";
+  if (tap) out.value = outJSON(rec, endRec);
+  else if (endMode) out.value = outJSON(times, padEnds());
   else out.value = "";
 }
 function ui(){
@@ -179,11 +276,13 @@ function ui(){
   endBtn.textContent = "補結束時間：" + (endMode ? "開" : "關");
 }
 tapBtn.onclick = function(){
+  if (!els.length) { alert("請先載入歌曲"); return; }
   tap = !tap; if (tap) endMode = false;
   rec = []; endRec = []; next = 0;
   ui(); showOut(); setActive(tap ? 0 : -1);
 };
 endBtn.onclick = function(){
+  if (!els.length) { alert("請先載入歌曲"); return; }
   endMode = !endMode; if (endMode) tap = false;
   endStack = [];
   ui(); showOut();
